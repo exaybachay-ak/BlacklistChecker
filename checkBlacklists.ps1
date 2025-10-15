@@ -1,8 +1,7 @@
 # IP Address Audit 
 #  Script to scrape together all Windows log artifacts for IP addresses and scan them to make a report of potential issues 
 
-#$ippattern = "{1-2}+{1-9}+{1-9}+\.{1-2}+{1-9}+{1-9}+\.{1-2}+{1-9}+{1-9}+\.{1-2}+{1-9}+{1-9}+"
-$ippattern = "\d+\.\d+\.\d+\.\d+"
+$ippattern = "\d+\.\d+\.\d+\.\d+" # TODO: Good enough but could be better - fix this later
 
 # Gather IP info
 $allipinfo = @()
@@ -12,20 +11,27 @@ $allipinfo += Get-NetTCPConnection
 $allipinfo += Ipconfig /displaydns 
 
 # Try to find IP addresses in security logs
-
-$secevents = Get-WinEvent -FilterHashtable @{LogName='Security'; Id=5156,5158,4688}
+$secevents = Get-WinEvent -FilterHashtable @{LogName='Security'; Id=5156,5158,4688} -erroraction silentlycontinue
+$seceventips = ($secevents.message | select-string -pattern $ippattern)
 $allipinfo += $seceventips
 
 # If sysmon is installed, look there for IP addresses 
-$sysmonevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Sysmon/Operational'; Id=3,22 }
-$allipinfo += $sysmoneventips
+$sysmon64check = get-service sysmon64 -erroraction silentlycontinue
+$sysmoncheck = get-service sysmon -erroraction silentlycontinue
+if(($sysmoncheck -ne $Null -and $sysmoncheck -ne '') -or ($sysmon64check -ne $Null -and $sysmon64check -ne '') ){
+    $sysmonevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Sysmon/Operational'; Id=3,22 }
+    $sysmoneventips = ($sysmonevents.message | select-string -pattern $ippattern)
+    $allipinfo += $sysmoneventips    
+}
 
 # Check Windows Defender logs
-$defenderevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117,5007 }
+$defenderevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=1116,1117,5007 } -erroraction silentlycontinue
+$defendereventips = ($defenderevents.message | select-string -pattern $ippattern)
 $allipinfo += $defendereventips
 
 # Check DNS Client logs 
-$dnsevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=3006,3010 }
+$dnsevents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Windows Defender/Operational'; Id=3006,3010 } -erroraction silentlycontinue
+$dnseventips = ($dnsevents | select-string -pattern $ippattern)
 $allipinfo += $dnsevents
 
 # Check the IP info for external IP addresses
@@ -62,6 +68,9 @@ $ssh = (Invoke-WebRequest -Uri 'https://lists.blocklist.de/lists/ssh.txt').conte
 $all = (Invoke-WebRequest -Uri 'https://lists.blocklist.de/lists/all.txt').content
 
 $fulllist = $all + $ipsumblacklist
+
+# Deduplicate IPs 
+$ips | sort -unique
 
 # Check each detected IP against the full blacklist
 $allips | % {
